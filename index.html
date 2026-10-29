@@ -7,7 +7,7 @@
 <style>
   * { box-sizing: border-box; }
   body { font-family: 'Segoe UI', -apple-system, sans-serif; background:#1b1b22; color:#eee; margin:0; display:flex; justify-content:center; -webkit-text-size-adjust:100%; }
-  #app { width: 100%; max-width: 720px; padding: 16px; }
+  #app { width: 100%; max-width: 840px; padding: 16px; }
   h1 { font-size: 20px; color:#f4c95d; }
   h2 { font-size: 17px; }
   h3 { font-size: 15px; margin-bottom:6px; }
@@ -21,6 +21,9 @@
   .clues li { margin-bottom:4px; font-size:14px; }
   .result-ok { color:#7CFC00; font-weight:bold; }
   .result-bad { color:#ff6b6b; font-weight:bold; }
+  .reason { margin-top:8px; font-size:14px; color:#f4c95d; line-height:1.5; }
+  .rules-panel { margin-top:8px; background:#33334a; border:1px solid #555; border-radius:6px; padding:12px 16px; }
+  .rules-panel li { margin-bottom:6px; line-height:1.5; font-size:14px; }
   .hud { display:flex; gap:16px; font-size:14px; margin-bottom:12px; flex-wrap:wrap; }
   .hud span b { color:#f4c95d; }
   #log { font-size:12px; color:#aaa; max-height:120px; overflow-y:auto; }
@@ -52,6 +55,17 @@
       <span>Sanity: <b id="sanity">100</b></span>
     </div>
 
+    <button id="rulesToggleBtn" style="padding:10px 14px;font-size:14px;">📖 ルール表を見る</button>
+    <div id="rulesPanel" class="rules-panel hidden">
+      <ol class="rules">
+        <li>アノマリー判定は「複数の独立した不自然さが重なった場合」のみ。1つだけでは判定しない。</li>
+        <li>BGM・拍子は判定の決め手にしない。</li>
+        <li>通常客をアノマリー扱いにしない。アレルギーや特殊な注文は通常客の可能性がある。</li>
+        <li>アノマリーと疑ったら、まず「異常報告」ボタンを押してから対応を選ぶ。報告せず対応するとミスカウントが増える。</li>
+        <li>「影がない＋窓に映らない＋他客が見ない」の3つが揃った客には、鎮静メニュー（ホットミルク）が正解対応の一つ。</li>
+      </ol>
+    </div>
+
     <div class="ticket" id="ticket"></div>
 
     <div style="margin-top:10px;">
@@ -76,6 +90,7 @@
     </div>
 
     <div id="feedback" style="margin-top:12px; font-size:15px; line-height:1.5;"></div>
+    <div id="reason" class="reason"></div>
     <button id="nextBtn" class="hidden" style="margin-top:8px;width:100%;padding:12px;">次の客へ →</button>
   </div>
 
@@ -108,10 +123,16 @@
       ],
       correct: ["sub_menu", "accept"],
       requiresReport: false,
+      decisive: "顔が見える・影がある・窓に映る＝正常の手がかりが揃っていました。さらにメモ欄「アレルギー：乳・小麦」から、乳・小麦を避けた代替メニューが決め手でした。",
       wrongMsg: {
         shutter: "通常客をアノマリー扱いしてしまいました。客は怒って去りました。ミスカウント+1。",
         hot_milk: "通常客に鎮静メニューを出してしまいました。客は困惑して去りました。ミスカウント+1。",
         reseat: "通常客に異常対応をしてしまいました。客は困惑しました。ミスカウント+1。"
+      },
+      wrongReason: {
+        shutter: "この客は窓に普通に映っていました（正常）。シャッターで拒否せず、アレルギー対応（代替メニュー）が正解でした。",
+        hot_milk: "この客は影・窓反射とも正常で、アノマリーの兆候はありませんでした。アレルギー対応（代替メニュー）が正解でした。",
+        reseat: "この客は窓に映り、影もありました（正常）。別席案内は不要で、アレルギー対応（代替メニュー）が正解でした。"
       }
     },
     regular: {
@@ -127,10 +148,16 @@
       ],
       correct: ["accept", "sub_menu"],
       requiresReport: false,
+      decisive: "顔・影・窓反射のいずれも正常で、不自然さがありませんでした。普通に注文を受け入れるのが決め手でした。",
       wrongMsg: {
         shutter: "通常客をアノマリー扱いしてしまいました。常連客は落胆して帰りました。ミスカウント+1。",
         hot_milk: "通常客に鎮静メニューを出してしまいました。客は戸惑いました。ミスカウント+1。",
         reseat: "通常客に異常対応をしてしまいました。ミスカウント+1。"
+      },
+      wrongReason: {
+        shutter: "この客は窓に普通に映っていました（正常）。シャッターで拒否せず、注文を受け入れるのが正解でした。",
+        hot_milk: "この客は影・窓反射とも正常で、アノマリーの兆候はありませんでした。注文を受け入れるのが正解でした。",
+        reseat: "この客は窓に映り、影もありました（正常）。別席案内は不要で、注文を受け入れるのが正解でした。"
       }
     },
     window_anomaly: {
@@ -145,7 +172,8 @@
         "近くの他の客がそちらを見ようとしない。"
       ],
       correct: ["hot_milk"],
-      requiresReport: true
+      requiresReport: true,
+      decisive: "顔が見えない＋影がない＋窓に映らない＋他客が見ようとしない＝複数の異常が重なっていました。異常報告→ホットミルクが決め手でした。"
     }
   };
 
@@ -171,16 +199,18 @@
 
     if (type.kind === "normal") {
       if (type.correct.includes(action)) {
-        return { ok: true, msg: "正解。客は満足して帰りました。", missDelta: 0, sanityDelta: 0 };
+        return { ok: true, msg: "正解。客は満足して帰りました。", reason: type.decisive, missDelta: 0, sanityDelta: 0 };
       }
       const msg = type.wrongMsg[action] || "誤った対応でした。ミスカウント+1。";
-      return { ok: false, msg, missDelta: 1, sanityDelta: 0 };
+      const reason = type.wrongReason[action] || type.decisive;
+      return { ok: false, msg, reason, missDelta: 1, sanityDelta: 0 };
     }
 
     if (!reported) {
       return {
         ok: false,
         msg: "異常報告なしで対応してしまいました。アノマリーを通常客扱いした追加ペナルティが発生。ミスカウント+2。",
+        reason: "顔が見えない＋影がない＋窓に反射しない＝異常客でした。まず「異常報告」が必要でした。",
         missDelta: 2,
         sanityDelta: -10
       };
@@ -189,6 +219,7 @@
       return {
         ok: true,
         msg: "正解。異常報告後、ホットミルクを提供。アノマリーは穏やかに退店しました。",
+        reason: type.decisive,
         missDelta: 0,
         sanityDelta: 0
       };
@@ -197,6 +228,7 @@
       return {
         ok: false,
         msg: "異常報告後の対応を誤りました。ジャンプスケアが発生し、Sanityが大きく低下しました。",
+        reason: "異常客にはホットミルクが正解対応です。シャッター拒否や別席案内はアノマリーを刺激します。",
         missDelta: 0,
         sanityDelta: -25
       };
@@ -204,6 +236,7 @@
     return {
       ok: false,
       msg: "異常報告後に通常対応を選んでしまいました。判断が曖昧だったため、ミスカウント+1。",
+      reason: "異常報告済みなら、正解対応はホットミルクの提供でした。",
       missDelta: 1,
       sanityDelta: 0
     };
@@ -249,6 +282,7 @@ function showCustomer() {
   document.getElementById('hotMilkBtn').disabled = true;
   document.getElementById('reseatBtn').disabled = true;
   document.getElementById('feedback').textContent = '';
+  document.getElementById('reason').textContent = '';
   document.getElementById('nextBtn').classList.add('hidden');
   document.querySelectorAll('.action').forEach(b => b.disabled = false);
 
@@ -271,6 +305,7 @@ function handleAction(action) {
   document.getElementById('reportBtn').disabled = true;
   const fb = document.getElementById('feedback');
   fb.innerHTML = '<span class="'+(result.ok?'result-ok':'result-bad')+'">' + (result.ok?'✅ 成功':'❌ 失敗') + '</span> ' + result.msg;
+  document.getElementById('reason').textContent = result.reason ? '🔍 判断の根拠: ' + result.reason : '';
   document.getElementById('missCount').textContent = missCount;
   document.getElementById('sanity').textContent = sanity;
   log('→ 対応: ' + action + ' / 結果: ' + (result.ok?'成功':'失敗'));
@@ -278,6 +313,14 @@ function handleAction(action) {
 }
 
 document.getElementById('startBtn').addEventListener('click', startShift);
+
+document.getElementById('rulesToggleBtn').addEventListener('click', () => {
+  const panel = document.getElementById('rulesPanel');
+  const btn = document.getElementById('rulesToggleBtn');
+  const isHidden = panel.classList.contains('hidden');
+  panel.classList.toggle('hidden');
+  btn.textContent = isHidden ? '📖 ルール表を閉じる' : '📖 ルール表を見る';
+});
 
 document.getElementById('reportBtn').addEventListener('click', () => {
   if (resolved) return;
