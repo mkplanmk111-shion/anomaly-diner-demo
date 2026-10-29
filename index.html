@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Anomaly Diner - 小規模試作</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: 'Segoe UI', -apple-system, sans-serif; background:#1b1b22; color:#eee; margin:0; display:flex; justify-content:center; -webkit-text-size-adjust:100%; }
+  #app { width: 100%; max-width: 720px; padding: 16px; }
+  h1 { font-size: 20px; color:#f4c95d; }
+  h2 { font-size: 17px; }
+  h3 { font-size: 15px; margin-bottom:6px; }
+  .panel { background:#2a2a35; border:1px solid #444; border-radius:8px; padding:14px; margin-bottom:14px; }
+  .rules li { margin-bottom:8px; line-height:1.5; font-size:14px; }
+  button { background:#3a3a48; color:#eee; border:1px solid #666; border-radius:6px; padding:12px 14px; margin:4px; cursor:pointer; font-size:15px; -webkit-appearance:none; }
+  button:hover:not(:disabled) { background:#50506a; }
+  button:disabled { opacity:0.35; cursor:not-allowed; }
+  button.report-on { background:#8a3b3b; border-color:#c15; }
+  .ticket { background:#fdf6e3; color:#222; padding:12px; border-radius:4px; font-family:monospace; font-size:14px; line-height:1.6; }
+  .clues li { margin-bottom:4px; font-size:14px; }
+  .result-ok { color:#7CFC00; font-weight:bold; }
+  .result-bad { color:#ff6b6b; font-weight:bold; }
+  .hud { display:flex; gap:16px; font-size:14px; margin-bottom:12px; flex-wrap:wrap; }
+  .hud span b { color:#f4c95d; }
+  #log { font-size:12px; color:#aaa; max-height:120px; overflow-y:auto; }
+  .hidden { display:none; }
+  .actions { display:flex; flex-wrap:wrap; gap:4px; }
+  .actions button { flex:1 1 45%; min-width:140px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>🍽️ Anomaly Diner</h1>
+
+  <div id="rulesScreen" class="panel">
+    <h2>行動前のルール（必読）</h2>
+    <ol class="rules">
+      <li>アノマリー判定は「複数の独立した不自然さが重なった場合」のみ。1つだけでは判定しない。</li>
+      <li>BGM・拍子は判定の決め手にしない。</li>
+      <li>通常客をアノマリー扱いにしない。アレルギーや特殊な注文は通常客の可能性がある。</li>
+      <li>アノマリーと疑ったら、まず「異常報告」ボタンを押してから対応を選ぶ。報告せず対応するとミスカウントが増える。</li>
+      <li>「影がない＋窓に映らない＋他客が見ない」の3つが揃った客には、鎮静メニュー（ホットミルク）が正解対応の一つ。</li>
+    </ol>
+    <button id="startBtn" style="width:100%;padding:14px;font-size:16px;background:#50506a;">シフトを開始する（客を呼ぶ）</button>
+  </div>
+
+  <div id="gameScreen" class="panel hidden">
+    <div class="hud">
+      <span>客 <b id="custIndex">1</b> / <b id="custTotal">4</b></span>
+      <span>ミス: <b id="missCount">0</b></span>
+      <span>Sanity: <b id="sanity">100</b></span>
+    </div>
+
+    <div class="ticket" id="ticket"></div>
+
+    <div style="margin-top:10px;">
+      <h3>👁️ 観察できる手がかり</h3>
+      <ul class="clues" id="clues"></ul>
+    </div>
+
+    <div style="margin-top:10px;">
+      <button id="reportBtn" style="width:100%;padding:12px;font-size:15px;">⚠️ 異常報告</button>
+      <span id="reportState" style="font-size:12px;color:#f4c95d;"></span>
+    </div>
+
+    <div style="margin-top:10px;">
+      <h3>対応を選ぶ</h3>
+      <div class="actions">
+        <button class="action" data-action="sub_menu">代替メニュー提案</button>
+        <button class="action" data-action="accept">注文を受け入れる</button>
+        <button class="action" data-action="shutter">シャッターで拒否</button>
+        <button class="action" data-action="hot_milk" id="hotMilkBtn" disabled>☕ ホットミルク提供</button>
+        <button class="action" data-action="reseat" id="reseatBtn" disabled>別席に案内する</button>
+      </div>
+    </div>
+
+    <div id="feedback" style="margin-top:12px; font-size:15px; line-height:1.5;"></div>
+    <button id="nextBtn" class="hidden" style="margin-top:8px;width:100%;padding:12px;">次の客へ →</button>
+  </div>
+
+  <div id="endScreen" class="panel hidden">
+    <h2>🏁 シフト終了</h2>
+    <div id="summary" style="font-size:15px;line-height:1.8;"></div>
+    <button id="retryBtn" style="width:100%;padding:14px;font-size:16px;margin-top:10px;background:#50506a;">もう一度プレイする</button>
+  </div>
+
+  <div class="panel">
+    <h3>📋 行動ログ</h3>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+// === game-logic.js inline ===
+(function (root) {
+  const CUSTOMER_TYPES = {
+    allergy: {
+      name: "アレルギー客",
+      kind: "normal",
+      order: "ピクルスだけ",
+      memo: "アレルギー：乳・小麦",
+      clues: [
+        "顔が見える。まばたき・呼吸に違和感なし。",
+        "カウンターの照明下で影が普通に落ちている。",
+        "窓ガラスに普通に反射している。",
+        "他の客が普通にこちらを見ている。"
+      ],
+      correct: ["sub_menu", "accept"],
+      requiresReport: false,
+      wrongMsg: {
+        shutter: "通常客をアノマリー扱いしてしまいました。客は怒って去りました。ミスカウント+1。",
+        hot_milk: "通常客に鎮静メニューを出してしまいました。客は困惑して去りました。ミスカウント+1。",
+        reseat: "通常客に異常対応をしてしまいました。客は困惑しました。ミスカウント+1。"
+      }
+    },
+    regular: {
+      name: "深夜の常連客",
+      kind: "normal",
+      order: "いつものコーヒーとパンケーキ",
+      memo: null,
+      clues: [
+        "顔が見える。たまにうたた寝するが呼吸は正常。",
+        "影は普通に落ちている。",
+        "窓ガラスに普通に反射している。",
+        "他の客は気にせず通常通り過ごしている。"
+      ],
+      correct: ["accept", "sub_menu"],
+      requiresReport: false,
+      wrongMsg: {
+        shutter: "通常客をアノマリー扱いしてしまいました。常連客は落胆して帰りました。ミスカウント+1。",
+        hot_milk: "通常客に鎮静メニューを出してしまいました。客は戸惑いました。ミスカウント+1。",
+        reseat: "通常客に異常対応をしてしまいました。ミスカウント+1。"
+      }
+    },
+    window_anomaly: {
+      name: "窓に映らない客",
+      kind: "anomaly",
+      order: "ピクルスだけ",
+      memo: null,
+      clues: [
+        "顔が見えない。",
+        "カウンターの照明下で影が落ちていない。",
+        "客の姿は見えるが、窓ガラスに反射する影がない。",
+        "近くの他の客がそちらを見ようとしない。"
+      ],
+      correct: ["hot_milk"],
+      requiresReport: true
+    }
+  };
+
+  function shuffle(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function buildSession() {
+    const candidates = ["allergy", "regular"];
+    const normal = shuffle(candidates)[0];
+    const normal2 = shuffle(candidates)[0];
+    return shuffle([normal, normal2, "window_anomaly", "window_anomaly"]);
+  }
+
+  function resolveAction(typeKey, reported, action) {
+    const type = CUSTOMER_TYPES[typeKey];
+    if (!type) throw new Error("unknown customer type: " + typeKey);
+
+    if (type.kind === "normal") {
+      if (type.correct.includes(action)) {
+        return { ok: true, msg: "正解。客は満足して帰りました。", missDelta: 0, sanityDelta: 0 };
+      }
+      const msg = type.wrongMsg[action] || "誤った対応でした。ミスカウント+1。";
+      return { ok: false, msg, missDelta: 1, sanityDelta: 0 };
+    }
+
+    if (!reported) {
+      return {
+        ok: false,
+        msg: "異常報告なしで対応してしまいました。アノマリーを通常客扱いした追加ペナルティが発生。ミスカウント+2。",
+        missDelta: 2,
+        sanityDelta: -10
+      };
+    }
+    if (type.correct.includes(action)) {
+      return {
+        ok: true,
+        msg: "正解。異常報告後、ホットミルクを提供。アノマリーは穏やかに退店しました。",
+        missDelta: 0,
+        sanityDelta: 0
+      };
+    }
+    if (action === "shutter" || action === "reseat") {
+      return {
+        ok: false,
+        msg: "異常報告後の対応を誤りました。ジャンプスケアが発生し、Sanityが大きく低下しました。",
+        missDelta: 0,
+        sanityDelta: -25
+      };
+    }
+    return {
+      ok: false,
+      msg: "異常報告後に通常対応を選んでしまいました。判断が曖昧だったため、ミスカウント+1。",
+      missDelta: 1,
+      sanityDelta: 0
+    };
+  }
+
+  root.AnomalyDinerLogic = { CUSTOMER_TYPES, buildSession, resolveAction, shuffle };
+})(window);
+
+// === main game UI ===
+const { CUSTOMER_TYPES, buildSession, resolveAction } = AnomalyDinerLogic;
+
+let session = [];
+let idx = 0;
+let missCount = 0;
+let sanity = 100;
+let reported = false;
+let resolved = false;
+let logLines = [];
+
+function log(line) {
+  logLines.unshift(line);
+  document.getElementById('log').innerHTML = logLines.slice(0,30).map(l => '<div>'+l+'</div>').join('');
+}
+
+function startShift() {
+  session = buildSession();
+  idx = 0; missCount = 0; sanity = 100; logLines = [];
+  document.getElementById('rulesScreen').classList.add('hidden');
+  document.getElementById('endScreen').classList.add('hidden');
+  document.getElementById('gameScreen').classList.remove('hidden');
+  document.getElementById('custTotal').textContent = session.length;
+  showCustomer();
+}
+
+function showCustomer() {
+  reported = false; resolved = false;
+  document.getElementById('custIndex').textContent = idx+1;
+  document.getElementById('missCount').textContent = missCount;
+  document.getElementById('sanity').textContent = sanity;
+  document.getElementById('reportBtn').classList.remove('report-on');
+  document.getElementById('reportBtn').disabled = false;
+  document.getElementById('reportState').textContent = '';
+  document.getElementById('hotMilkBtn').disabled = true;
+  document.getElementById('reseatBtn').disabled = true;
+  document.getElementById('feedback').textContent = '';
+  document.getElementById('nextBtn').classList.add('hidden');
+  document.querySelectorAll('.action').forEach(b => b.disabled = false);
+
+  const type = CUSTOMER_TYPES[session[idx]];
+  document.getElementById('ticket').innerHTML =
+    '<b>📝 注文票</b><br>注文: ' + type.order + '<br>メモ欄: ' + (type.memo ? type.memo : '(空欄)');
+  document.getElementById('clues').innerHTML = type.clues.map(c => '<li>'+c+'</li>').join('');
+  log('客 '+(idx+1)+': 来店しました。');
+}
+
+function handleAction(action) {
+  if (resolved) return;
+  const typeKey = session[idx];
+  const result = resolveAction(typeKey, reported, action);
+  missCount = Math.max(0, missCount + result.missDelta);
+  sanity = Math.max(0, Math.min(100, sanity + result.sanityDelta));
+
+  resolved = true;
+  document.querySelectorAll('.action').forEach(b => b.disabled = true);
+  document.getElementById('reportBtn').disabled = true;
+  const fb = document.getElementById('feedback');
+  fb.innerHTML = '<span class="'+(result.ok?'result-ok':'result-bad')+'">' + (result.ok?'✅ 成功':'❌ 失敗') + '</span> ' + result.msg;
+  document.getElementById('missCount').textContent = missCount;
+  document.getElementById('sanity').textContent = sanity;
+  log('→ 対応: ' + action + ' / 結果: ' + (result.ok?'成功':'失敗'));
+  document.getElementById('nextBtn').classList.remove('hidden');
+}
+
+document.getElementById('startBtn').addEventListener('click', startShift);
+
+document.getElementById('reportBtn').addEventListener('click', () => {
+  if (resolved) return;
+  reported = true;
+  document.getElementById('reportBtn').classList.add('report-on');
+  document.getElementById('reportState').textContent = '⚠️ 異常報告済み';
+  document.getElementById('hotMilkBtn').disabled = false;
+  document.getElementById('reseatBtn').disabled = false;
+  log('→ 異常報告ボタンを押しました。');
+});
+
+document.querySelectorAll('.action').forEach(btn => {
+  btn.addEventListener('click', () => handleAction(btn.dataset.action));
+});
+
+document.getElementById('nextBtn').addEventListener('click', () => {
+  idx += 1;
+  if (idx >= session.length) {
+    document.getElementById('gameScreen').classList.add('hidden');
+    document.getElementById('endScreen').classList.remove('hidden');
+    const perfect = missCount === 0 && sanity === 100;
+    document.getElementById('summary').innerHTML =
+      '来店客数: ' + session.length + '<br>ミスカウント: ' + missCount + '<br>最終Sanity: ' + sanity +
+      (perfect ? '<br><br>🎉 パーフェクト！全客を正しく対応しました。' : '');
+    log('シフト終了。ミスカウント='+missCount+' Sanity='+sanity);
+  } else {
+    showCustomer();
+  }
+});
+
+document.getElementById('retryBtn').addEventListener('click', () => {
+  document.getElementById('endScreen').classList.add('hidden');
+  document.getElementById('rulesScreen').classList.remove('hidden');
+});
+</script>
+</body>
+</html>
